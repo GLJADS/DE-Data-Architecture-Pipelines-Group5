@@ -1,95 +1,84 @@
-volumes:
-  version: '3.8'
+version: "3.9"
 
-  services:
-    spark-driver-app:
-      image: jupyter/all-spark-notebook:latest
-      container_name: spark-driver-app
-      ports:
-        - "8888:8888"
-        - "4040-4050:4040-4050"
-      environment:
-        - JUPYTER_ENABLE_LAB=yes
-      volumes:
-        - ../Notebook:/home/jovyan/notebooks
-        - ../Data:/home/jovyan/data
-        - ../checkpoint:/home/jovyan/checkpoint
+services:
+  spark-driver-app:
+    build:
+      context: ./jupyter-all-spark-notebook-gcp
+    container_name: spark-driver-app
+    ports:
+      - "8888:8888"    # Jupyter
+      - "4040:4040"    # Spark UI
+    volumes:
+      - ~/notebooks:/home/jovyan/work/notebooks
+      - ~/data:/home/jovyan/work/data
+      - ~/checkpoint:/home/jovyan/work/checkpoint
+    networks:
+      - spark-net
+    environment:
+      - JUPYTER_ENABLE_LAB=yes
+      - SPARK_MASTER=spark://spark-master:7077
+    depends_on:
+      - spark-master
 
-    spark-master:
-      image: bitnami/spark:3
-      container_name: spark-master
-      command: "/opt/bitnami/spark/sbin/start-master.sh && tail -f /dev/null"
-      environment:
-        - SPARK_MODE=master
-      ports:
-        - "8080:8080"
-        - "7077:7077"
-      volumes:
-        - ../Data:/home/jovyan/data
-        - ../checkpoint:/home/jovyan/checkpoint
+  spark-master:
+    build:
+      context: ./spark-bitnami-python3.11
+    container_name: spark-master
+    ports:
+      - "8080:8080"    # Spark Master UI
+      - "7077:7077"    # Spark Master Port
+    networks:
+      - spark-net
 
-    spark-worker-1:
-      image: bitnami/spark:3
-      container_name: spark-worker-1
-      depends_on:
-        - spark-master
-      environment:
-        - SPARK_MODE=worker
-        - SPARK_MASTER_URL=spark://spark-master:7077
-      command: "/opt/bitnami/spark/sbin/start-worker.sh spark://spark-master:7077 && tail -f /dev/null"
-      ports:
-        - "8081:8081"
-      volumes:
-        - ../Data:/home/jovyan/data
-        - ../checkpoint:/home/jovyan/checkpoint
+  spark-worker-1:
+    build:
+      context: ./spark-bitnami-python3.11
+    container_name: spark-worker-1
+    ports:
+      - "8081:8081"
+    environment:
+      - SPARK_MASTER_URL=spark://spark-master:7077
+    depends_on:
+      - spark-master
+    networks:
+      - spark-net
 
-    spark-worker-2:
-      image: bitnami/spark:3
-      container_name: spark-worker-2
-      depends_on:
-        - spark-master
-      environment:
-        - SPARK_MODE=worker
-        - SPARK_MASTER_URL=spark://spark-master:7077
-      command: "/opt/bitnami/spark/sbin/start-worker.sh spark://spark-master:7077 && tail -f /dev/null"
-      ports:
-        - "8082:8081"
-      volumes:
-        - ../Data:/home/jovyan/data
-        - ../checkpoint:/home/jovyan/checkpoint
+  spark-worker-2:
+    build:
+      context: ./spark-bitnami-python3.11
+    container_name: spark-worker-2
+    ports:
+      - "8082:8081"
+    environment:
+      - SPARK_MASTER_URL=spark://spark-master:7077
+    depends_on:
+      - spark-master
+    networks:
+      - spark-net
 
-    zookeeper:
-      image: zookeeper:3.4.9
-      hostname: zookeeper
-      container_name: zookeeper
-      ports:
-        - "2181:2181"
+  zookeeper:
+    image: zookeeper:3.4.9
+    container_name: zookeeper
+    ports:
+      - "2181:2181"
+    networks:
+      - spark-net
 
-    kafka1:
-      image: confluentinc/cp-kafka:5.2.5
-      hostname: kafka1
-      container_name: kafka1
-      ports:
-        - "9092:9092"
-      environment:
-        KAFKA_ZOOKEEPER_CONNECT: "zookeeper:2181"
-        KAFKA_BROKER_ID: 1
-        KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-        KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
-        KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka1:9092
-      depends_on:
-        - zookeeper
+  kafka:
+    image: confluentinc/cp-kafka:5.2.5
+    container_name: kafka
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    depends_on:
+      - zookeeper
+    networks:
+      - spark-net
 
-  volumes:
-    # Named volumes kept for compatibility, but we use relative mounts above.
-    spark-data: {}
-    notebooks: {}
-    spark-checkpoint: {}
-
-  # Notes:
-  # - Relative mounts (../Data and ../Notebook) assume this file stays in `Deployment/`.
-  # - Create a `checkpoint` folder at the repo root if you want persistent checkpoints:
-  #     mkdir checkpoint
-  # - If you prefer to build local images instead of using public images, add `build:`
-  #   blocks and point `context:` to your local build directories.
-      KAFKA_ADVERTISED_LISTENERS: LISTENER_DOCKER_INTERNAL://kafka1:9093,LISTENER_DOCKER_EXTERNAL://${EXTERNAL_IP}:9092
+networks:
+  spark-net:
+    driver: bridge
