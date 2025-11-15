@@ -24,8 +24,8 @@ These notebooks are **not part of the container image**.
 They live in a GCS bucket, for example:
 
 ```
-gs://dejadsgl-pipe1/notebooks/Pipe1_1_CleanDataset.ipynb
-gs://dejadsgl-pipe1/notebooks/Pipe1_2_IntegrationTables.ipynb
+gs://netflix-group5-notebooks_gl/pipe1/notebooks/Pipe1_1_CleanDataset.ipynb
+gs://netflix-group5-notebooks_gl/pipe1/notebooks/Pipe1_2_IntegrationTables.ipynb
 ```
 
 The Cloud Run Job downloads, executes, and uploads results dynamically.
@@ -39,7 +39,7 @@ Only the following files must be inside `/notebooks/project` when building the c
 ```
 Dockerfile
 requirements.txt
-run_pipeline.py
+run_pipeline1.py
 ```
 
 Notebooks are **not stored in the image** but inside GCS.
