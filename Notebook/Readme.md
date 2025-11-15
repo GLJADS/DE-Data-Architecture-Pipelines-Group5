@@ -1,118 +1,216 @@
-# Pipe1 Data Pipeline – Deployment Guide (Google Cloud)
+# Pipe1 Data Pipeline – Cloud Run + GCS Notebook Execution (Updated Deployment Guide)
 
-This guide explains how to build, deploy, and execute the Pipe1 data-processing pipeline on Google Cloud using:
+This guide describes how to deploy and run the Pipe1 data pipeline using **Google Cloud Run Jobs**, with all notebooks stored in **Google Cloud Storage (GCS)** instead of inside the container image.
 
-- Artifact Registry (stores the container image)
-- Cloud Run Jobs (runs the full notebook pipeline)
-- Cloud Scheduler (optional automation)
+This enables:
+- Updating notebooks **without rebuilding** the container image  
+- Clean separation between pipeline code and notebook logic  
+- Full automation via Cloud Run + Cloud Scheduler  
+
+---
+
+# 1. Pipeline Architecture (GCS-Based Notebooks)
 
 The pipeline executes the following notebooks in sequence:
 
-1. Pipe1_1_CleanDataset.ipynb
-2. Pipe1_2_IntegrationTables.ipynb
-3. Pipe1_3_FeatureTables.ipynb
-4. Pipe1_4_AggregationsAnalytics.ipynb
-5. Pipe1_5_Output_to_Serving_layer.ipynb
+1. `Pipe1_1_CleanDataset.ipynb`  
+2. `Pipe1_2_IntegrationTables.ipynb`  
+3. `Pipe1_3_FeatureTables.ipynb`  
+4. `Pipe1_4_AggregationsAnalytics.ipynb`  
+5. `Pipe1_5_Output_to_Serving_layer.ipynb`  
 
-All commands must be executed on the VM via SSH, inside:
-/notebooks/project
+**Important:**  
+These notebooks are **not part of the container image**.  
+They live in a GCS bucket, for example:
 
-## 0. Required Files
+```
+gs://dejadsgl-pipe1/notebooks/Pipe1_1_CleanDataset.ipynb
+gs://dejadsgl-pipe1/notebooks/Pipe1_2_IntegrationTables.ipynb
+```
 
-Your directory must contain:
+The Cloud Run Job downloads, executes, and uploads results dynamically.
 
-- Dockerfile
-- requirements.txt
-- run_pipeline.py
-- Pipe1_1_CleanDataset.ipynb
-- Pipe1_2_IntegrationTables.ipynb
-- Pipe1_3_FeatureTables.ipynb
-- Pipe1_4_AggregationsAnalytics.ipynb
-- Pipe1_5_Output_to_Serving_layer.ipynb
+---
 
-### requirements.txt must include:
+# 2. Required Files in the Image
 
-- pyspark
-- papermill
-- nbformat
-- nbclient
-- pandas
-- numpy
-- google-cloud-bigquery
-- google-cloud-storage
-- pyarrow
-- ipykernel
+Only the following files must be inside `/notebooks/project` when building the container:
 
-## 1. Set Environment Variables
+```
+Dockerfile
+requirements.txt
+run_pipeline.py
+```
+
+Notebooks are **not stored in the image** but inside GCS.
+
+---
+
+# 3. requirements.txt (Minimal Runtime Dependencies)
+
+```
+pyspark
+papermill
+google-cloud-storage
+google-cloud-bigquery
+nbformat
+nbclient
+pandas
+numpy
+pyarrow
+ipykernel
+```
+
+---
+
+# 4. Environment Variables (Must Be Set for Cloud Run Job)
+
+These control where notebooks are loaded from and where executed versions are saved.
+
+```
+PIPELINE_NOTEBOOK_BUCKET=<your-bucket-name>
+PIPELINE_NOTEBOOK_PREFIX=pipe1/notebooks
+PIPELINE_EXECUTED_PREFIX=pipe1/executed
+```
+
+Example:
+
+```
+PIPELINE_NOTEBOOK_BUCKET=dejadsgl-pipe1
+PIPELINE_NOTEBOOK_PREFIX=pipe1/notebooks
+PIPELINE_EXECUTED_PREFIX=pipe1/executed
+```
+
+---
+
+# 5. IAM Roles Required
+
+## 5.1 Service Account for Cloud Run Job (`pipe1-job-sa`)
+
+This account must have:
+
+```
+roles/artifactregistry.reader
+roles/storage.objectAdmin
+roles/bigquery.jobUser
+roles/bigquery.dataEditor      <-- REQUIRED for BigQuery writes
+```
+
+## 5.2 Service Account for Scheduler (`pipe1-scheduler-sa`)
+
+```
+roles/run.invoker
+```
+
+---
+
+# 6. Set Deployment Variables
 
 ```
 PROJECT_ID="dejadsgl"
 REGION="us-central1"
 IMAGE="$REGION-docker.pkg.dev/$PROJECT_ID/de-pipelines/pipe1-job"
-SA="966685993851-compute@developer.gserviceaccount.com"
+SA="pipe1-job-sa@$PROJECT_ID.iam.gserviceaccount.com"
 ```
 
-## 2. Create Artifact Registry Repository (One Time)
+---
+
+# 7. Create Artifact Registry Repository (One-Time Setup)
 
 ```
 gcloud artifacts repositories create de-pipelines   --repository-format=docker   --location="$REGION"   --description="Pipeline images for Pipe1"
 ```
 
-If the repository already exists, continue.
+---
 
-## 3. Build and Push Container Image
+# 8. Build and Push Container Image
+
+Run inside `/notebooks/project`:
 
 ```
 gcloud builds submit . --tag "$IMAGE"
 ```
 
-## 4. Deploy Cloud Run Job
+---
+
+# 9. Deploy the Cloud Run Job (Pipeline)
 
 ```
-gcloud run jobs create pipe1-job   --image="$IMAGE"   --region="$REGION"   --service-account="$SA"   --cpu=2   --memory=4Gi   --max-retries=1   --task-timeout=3600s
+gcloud run jobs create pipe1-job   --image="$IMAGE"   --region="$REGION"   --service-account="$SA"   --cpu=2   --memory=4Gi   --max-retries=1   --task-timeout=3600s   --set-env-vars PIPELINE_NOTEBOOK_BUCKET=$PIPELINE_NOTEBOOK_BUCKET   --set-env-vars PIPELINE_NOTEBOOK_PREFIX=$PIPELINE_NOTEBOOK_PREFIX   --set-env-vars PIPELINE_EXECUTED_PREFIX=$PIPELINE_EXECUTED_PREFIX
 ```
 
-## 5. Execute the Pipeline (Manual Run)
+---
+
+# 10. Execute the Pipeline Manually
 
 ```
 gcloud run jobs execute pipe1-job --region="$REGION"
 ```
 
-Then check logs in:
-Cloud Run → Jobs → pipe1-job → Executions → Logs
+Check logs under:
 
-## 6. (Optional) Schedule the Pipeline
+Cloud Run → Jobs → `pipe1-job` → Executions → Logs
 
-In Cloud Run UI:
-Cloud Run → Jobs → pipe1-job → **Schedule job**
+---
 
-## 7. Updating the Pipeline
+# 11. Schedule the Pipeline (Optional)
 
-### Rebuild image:
+In the Cloud Console:
+
+1. Cloud Run → Jobs → `pipe1-job`  
+2. Click **Schedule job**  
+3. Choose cron, e.g.
+
+```
+0 3 * * *
+Timezone: Europe/Amsterdam
+```
+
+4. Select scheduler service account (`pipe1-scheduler-sa`)
+
+---
+
+# 12. Updating the Pipeline
+
+### Updating notebooks (no rebuild required)
+- Upload new version of notebook to GCS  
+- Next job execution uses the updated version  
+
+### Updating pipeline logic (Python / Dockerfile)
 ```
 gcloud builds submit . --tag "$IMAGE"
+gcloud run jobs update pipe1-job --image="$IMAGE" --region="$REGION"
 ```
 
-### Update job:
+---
+
+# 13. Troubleshooting
+
+### Notebook Not Found
 ```
-gcloud run jobs update pipe1-job   --image="$IMAGE"   --region="$REGION"   --service-account="$SA"
+FileNotFoundError: gs://<bucket>/<prefix>/<file>
 ```
 
-### Test again:
+### BigQuery Write Permission Error
 ```
-gcloud run jobs execute pipe1-job --region="$REGION"
-```
-
-## 8. Troubleshooting
-
-### pyspark missing  
-Add `pyspark` to requirements.txt and rebuild.
-
-### BigQuery temp bucket  
-Inside notebooks:
-```
-spark.conf.set("temporaryGcsBucket", "<YOUR-BUCKET>")
+PERMISSION_DENIED: Access Denied: Table ...
 ```
 
-### Cloud Run job fails  
-Check logs under: Cloud Run → Jobs → Executions.
+### pyspark Missing
+Add to `requirements.txt` and rebuild.
+
+### Cloud Run cannot read bucket
+Check service account roles + env vars.
+
+---
+
+# 14. Summary
+
+This pipeline:
+
+- Loads notebooks dynamically from GCS  
+- Executes them sequentially using Papermill  
+- Uploads executed notebooks back to GCS  
+- Runs serverlessly via Cloud Run Jobs  
+- Can be automated using Cloud Scheduler  
+- Allows updating notebooks **without container rebuilds**  
