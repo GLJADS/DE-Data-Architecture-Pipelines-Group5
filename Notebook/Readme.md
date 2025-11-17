@@ -1,115 +1,197 @@
-# Pipe1 Data Pipeline – Cloud Run Jobs + GCS-Based Notebook Execution (Final Updated Guide)
+# Pipe1 Data Pipeline – Cloud Run Jobs + GCS Notebook Execution  
+*(Final, corrected edition)*
 
-This README has been fully reviewed and corrected. All commands, concepts, and deployment steps now match the actual working setup in your project:
-- Project ID: dejadsgl
-- Region: us-central1
-- Artifact Registry Repository: de-pipelines
-- Cloud Run Job Name: pipe1-job
-- Container Image: us-central1-docker.pkg.dev/dejadsgl/de-pipelines/pipeline-image:latest
+This pipeline executes a sequence of Jupyter notebooks stored in Google Cloud Storage using a Cloud Run Job that runs Spark + Papermill inside a Docker container.  
+It performs ETL using Spark (reading from GCS) and writes final tables to BigQuery using the Python BigQuery client.
 
-This version includes a validated and simplified flow for building and pushing Docker images, running the pipeline via Cloud Run Jobs, updating notebooks without rebuilding images, and updating the Docker image when pipeline logic changes.
+---
 
-# 1. Pipeline Architecture (Notebook Execution from GCS)
+## 1. Architecture Overview
 
-The pipeline runs a sequence of Jupyter notebooks stored outside the image, in Google Cloud Storage:
+The pipeline runs five notebooks located in:
 
-gs://<bucket>/pipe1/notebooks/Pipe1_1_CleanDataset.ipynb
-gs://<bucket>/pipe1/notebooks/Pipe1_2_IntegrationTables.ipynb
-gs://<bucket>/pipe1/notebooks/Pipe1_3_FeatureTables.ipynb
-gs://<bucket>/pipe1/notebooks/Pipe1_4_AggregationsAnalytics.ipynb
-gs://<bucket>/pipe1/notebooks/Pipe1_5_Output_to_Serving_layer.ipynb
+```
+gs://<bucket>/pipe1/notebooks/
+```
 
-The job downloads the notebooks, executes them using Papermill + PySpark, and writes executed notebooks back to GCS.
+Executed versions are written to:
 
-# 2. Required Files in the Docker Image
+```
+gs://<bucket>/pipe1/executed/
+```
 
-Dockerfile  
-requirements.txt  
-run_pipeline1.py  
+### Execution Flow
+1. Cloud Run Job starts container  
+2. Container downloads notebooks from GCS  
+3. Each notebook is executed using Papermill  
+4. Spark reads CSV files from GCS using the GCS connector  
+5. Notebooks write results to BigQuery via Python BigQuery Client  
+6. Executed notebooks are uploaded to GCS  
+7. Job exits successfully
 
-# 3. requirements.txt
+---
 
-pyspark  
-papermill  
-google-cloud-storage  
-google-cloud-bigquery  
-nbformat  
-nbclient  
-pandas  
-numpy  
-pyarrow  
-ipykernel  
+## 2. Files Inside the Docker Image
 
-# 4. Environment Variables
+```
+Dockerfile
+requirements.txt
+run_pipeline1.py
+```
 
-PIPELINE_NOTEBOOK_BUCKET=<your-bucket>  
-PIPELINE_NOTEBOOK_PREFIX=pipe1/notebooks  
-PIPELINE_EXECUTED_PREFIX=pipe1/executed  
+Notebooks are not baked into the image—they are downloaded from GCS.
 
-# 5. IAM Requirements
+---
 
-roles/artifactregistry.reader  
-roles/storage.objectAdmin  
-roles/bigquery.jobUser  
-roles/bigquery.dataEditor  
+## 3. Python Dependencies
 
-# 6. Deployment Variables
+Your requirements.txt must contain:
 
-PROJECT_ID="dejadsgl"  
-REGION="us-central1"  
-REPO="de-pipelines"  
-IMAGE="us-central1-docker.pkg.dev/$PROJECT_ID/$REPO/pipeline-image:latest"  
-SA="pipe1-job-sa@$PROJECT_ID.iam.gserviceaccount.com"  
+```
+pyspark
+papermill
+google-cloud-storage
+google-cloud-bigquery
+db-dtypes
+nbformat
+nbclient
+pandas
+numpy
+pyarrow
+ipykernel
+```
 
-# 7. Create Artifact Registry Repo
+---
 
-gcloud artifacts repositories create de-pipelines --repository-format=docker --location=us-central1 
+## 4. Environment Variables
 
-# 8. Build & Push Image
+Passed into Cloud Run Job:
 
-cd ~/notebooks/project  
-sudo gcloud auth configure-docker us-central1-docker.pkg.dev  
-sudo docker build -t $IMAGE .  
-sudo docker push $IMAGE  
+```
+PIPELINE_NOTEBOOK_BUCKET=<gcs-bucket>
+PIPELINE_NOTEBOOK_PREFIX=pipe1/notebooks
+PIPELINE_EXECUTED_PREFIX=pipe1/executed
+```
 
-# 9. Deploy Cloud Run Job
+Defined inside the notebooks:
 
-gcloud run jobs create pipe1-job --image=$IMAGE --region=$REGION --service-account=$SA --cpu=2 --memory=4Gi --max-retries=1 --task-timeout=3600s --set-env-vars PIPELINE_NOTEBOOK_BUCKET=$PIPELINE_NOTEBOOK_BUCKET --set-env-vars PIPELINE_NOTEBOOK_PREFIX=$PIPELINE_NOTEBOOK_PREFIX --set-env-vars PIPELINE_EXECUTED_PREFIX=$PIPELINE_EXECUTED_PREFIX
+```
+project_id = "dejadsgl"
+bq_dataset = "netflix"
+```
 
-# 10. Execute Pipeline
+---
 
-gcloud run jobs execute pipe1-job --region=us-central1
+## 5. IAM Requirements
 
-# 11. Scheduling
+The Cloud Run Job service account must have:
 
+```
+roles/storage.objectAdmin
+roles/artifactregistry.reader
+roles/bigquery.dataEditor
+roles/bigquery.jobUser
+roles/bigquery.user
+```
+
+---
+
+## 6. Deployment Variables
+
+```
+PROJECT_ID="dejadsgl"
+REGION="us-central1"
+REPO="de-pipelines"
+IMAGE="us-central1-docker.pkg.dev/$PROJECT_ID/$REPO/pipeline1:latest"
+SA="pipe1-job-sa@$PROJECT_ID.iam.gserviceaccount.com"
+```
+
+---
+
+## 7. Create Artifact Registry Repo
+
+```
+gcloud artifacts repositories create de-pipelines     --repository-format=docker     --location=us-central1
+```
+
+---
+
+## 8. Build & Push Image
+
+```
+sudo gcloud auth configure-docker us-central1-docker.pkg.dev
+
+sudo docker build -t $IMAGE .
+sudo docker push $IMAGE
+```
+
+---
+
+## 9. Deploy Cloud Run Job
+
+```
+gcloud run jobs create pipe1-job   --image=$IMAGE   --region=$REGION   --service-account=$SA   --cpu=2   --memory=4Gi   --max-retries=1   --task-timeout=3600s   --set-env-vars PIPELINE_NOTEBOOK_BUCKET=$PIPELINE_NOTEBOOK_BUCKET   --set-env-vars PIPELINE_NOTEBOOK_PREFIX=$PIPELINE_NOTEBOOK_PREFIX   --set-env-vars PIPELINE_EXECUTED_PREFIX=$PIPELINE_EXECUTED_PREFIX
+```
+
+---
+
+## 10. Execute Pipeline
+
+```
+gcloud run jobs executions run pipe1-job --region=us-central1
+```
+
+---
+
+## 11. Scheduling (Cloud Scheduler)
+
+```
 0 3 * * *
+```
 
-# 12. Updating Pipeline
+---
 
-Notebook updates → upload new notebook to GCS  
-Code updates → rebuild + push + update job  
+## 12. Updating the Pipeline
 
-# 13. Static External IP for VM
+### Notebook-only changes  
+→ Upload new notebook to GCS  
+→ No rebuild needed  
 
-Reserve static IP:  
-gcloud compute addresses create my-static-ip --region=us-central1  
+### Code or dependency changes  
+→ Rebuild container  
+→ Push new image  
+→ Update Cloud Run Job
 
-Find IP:  
-gcloud compute addresses describe my-static-ip --region=us-central1 --format="get(address)"  
+---
 
-Remove ephemeral:  
-gcloud compute instances delete-access-config instance-20251029-143900 --zone=us-central1-c --network-interface=nic0 --access-config-name="External NAT"  
+## 13. Spark & BigQuery Integration
 
-Add static IP:  
-gcloud compute instances add-access-config instance-20251029-143900 --zone=us-central1-c --network-interface=nic0 --access-config-name="External NAT" --address=<STATIC-IP>  
+Spark does not use a BigQuery connector.  
+The container includes only the GCS connector.
 
-Verify:  
-gcloud compute instances describe instance-20251029-143900 --zone=us-central1-c --format="get(networkInterfaces[0].accessConfigs[0].natIP)"
+BigQuery is accessed via:
 
-# 14. Summary
+- google-cloud-bigquery  
+- db-dtypes  
+- load_table_from_dataframe()  
+- list_rows().to_dataframe()
 
-- Cloud Run Jobs are correct for this workflow  
-- Notebooks remain in GCS  
-- Image only contains Spark + pipeline logic  
-- Notebook updates need no rebuild  
-- Code updates require rebuild + update job  
+Spark is used only for transformations.
+
+---
+
+## 14. Static External IP for VM
+
+```
+gcloud compute addresses create my-static-ip --region=us-central1
+gcloud compute addresses describe my-static-ip --region=us-central1 --format="get(address)"
+```
+
+---
+
+## 15. Final Notes
+
+- Pipeline is fully working end‑to‑end  
+- BigQuery operations rely on Python, not Spark  
+- Updating notebooks requires no rebuild  
+- Updating code requires rebuild + redeploy  
