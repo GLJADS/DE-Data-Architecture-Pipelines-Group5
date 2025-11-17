@@ -1,4 +1,4 @@
-# Pipe1 Data Pipeline – Cloud Run Jobs + GCS Notebook Execution  
+# pipeline1 Data Pipeline – Cloud Run Jobs + GCS Notebook Execution  
 *(Final, corrected edition)*
 
 This pipeline executes a sequence of Jupyter notebooks stored in Google Cloud Storage using a Cloud Run Job that runs Spark + Papermill inside a Docker container.  
@@ -11,13 +11,13 @@ It performs ETL using Spark (reading from GCS) and writes final tables to BigQue
 The pipeline runs five notebooks located in:
 
 ```
-gs://<bucket>/pipe1/notebooks/
+gs://<bucket>/pipeline1/notebooks/
 ```
 
 Executed versions are written to:
 
 ```
-gs://<bucket>/pipe1/executed/
+gs://<bucket>/pipeline1/executed/
 ```
 
 ### Execution Flow
@@ -69,8 +69,8 @@ Passed into Cloud Run Job:
 
 ```
 PIPELINE_NOTEBOOK_BUCKET=<gcs-bucket>
-PIPELINE_NOTEBOOK_PREFIX=pipe1/notebooks
-PIPELINE_EXECUTED_PREFIX=pipe1/executed
+PIPELINE_NOTEBOOK_PREFIX=pipeline1/notebooks
+PIPELINE_EXECUTED_PREFIX=pipeline1/executed
 ```
 
 Defined inside the notebooks:
@@ -103,7 +103,7 @@ PROJECT_ID="dejadsgl"
 REGION="us-central1"
 REPO="de-pipelines"
 IMAGE="us-central1-docker.pkg.dev/$PROJECT_ID/$REPO/pipeline1:latest"
-SA="pipe1-job-sa@$PROJECT_ID.iam.gserviceaccount.com"
+SA="pipeline1-job-sa@$PROJECT_ID.iam.gserviceaccount.com"
 ```
 
 ---
@@ -130,7 +130,7 @@ sudo docker push $IMAGE
 ## 9. Deploy Cloud Run Job
 
 ```
-gcloud run jobs create pipe1-job   --image=$IMAGE   --region=$REGION   --service-account=$SA   --cpu=2   --memory=4Gi   --max-retries=1   --task-timeout=3600s   --set-env-vars PIPELINE_NOTEBOOK_BUCKET=$PIPELINE_NOTEBOOK_BUCKET   --set-env-vars PIPELINE_NOTEBOOK_PREFIX=$PIPELINE_NOTEBOOK_PREFIX   --set-env-vars PIPELINE_EXECUTED_PREFIX=$PIPELINE_EXECUTED_PREFIX
+gcloud run jobs create pipeline1-job   --image=$IMAGE   --region=$REGION   --service-account=$SA   --cpu=2   --memory=4Gi   --max-retries=1   --task-timeout=3600s   --set-env-vars PIPELINE_NOTEBOOK_BUCKET=$PIPELINE_NOTEBOOK_BUCKET   --set-env-vars PIPELINE_NOTEBOOK_PREFIX=$PIPELINE_NOTEBOOK_PREFIX   --set-env-vars PIPELINE_EXECUTED_PREFIX=$PIPELINE_EXECUTED_PREFIX
 ```
 
 ---
@@ -138,7 +138,7 @@ gcloud run jobs create pipe1-job   --image=$IMAGE   --region=$REGION   --service
 ## 10. Execute Pipeline
 
 ```
-gcloud run jobs executions run pipe1-job --region=us-central1
+gcloud run jobs executions run pipeline1-job --region=us-central1
 ```
 
 ---
