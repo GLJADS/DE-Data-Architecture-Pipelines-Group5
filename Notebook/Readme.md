@@ -2,7 +2,7 @@
 *(Final, corrected edition)*
 
 This pipeline executes a sequence of Jupyter notebooks stored in Google Cloud Storage using a Cloud Run Job that runs Spark + Papermill inside a Docker container.  
-It performs ETL using Spark (reading from GCS) and writes final tables to BigQuery using the Python BigQuery client.
+It performs ETL using Spark (reading from GCS) and writes final tables to BigQuery via the Python BigQuery client.
 
 ---
 
@@ -195,3 +195,71 @@ gcloud compute addresses describe my-static-ip --region=us-central1 --format="ge
 - BigQuery operations rely on Python, not Spark  
 - Updating notebooks requires no rebuild  
 - Updating code requires rebuild + redeploy  
+
+---
+
+# 16. Troubleshooting Summary / Lessons Learned
+
+During development several issues were encountered, primarily around Spark compatibility, dependency conflicts, and Cloud Run execution. These adjustments were required to achieve a stable, fully working pipeline:
+
+### 1. Removed Spark → BigQuery connector
+All versions of the Spark BigQuery connector caused Java/Scala incompatibility errors (NoClassDefFoundError, NoSuchMethodError, ServiceConfigurationError).  
+The connector was removed entirely. Spark now uses **only the GCS connector**, not a BigQuery connector.
+
+### 2. Replaced all BigQuery I/O with the Python BigQuery Client
+All Spark-based BigQuery reads/writes:
+
+```
+spark.read.format("bigquery")
+df.write.format("bigquery")
+```
+
+were replaced with:
+
+- `bq_client.list_rows(...).to_dataframe()`  
+- `spark.createDataFrame(...)`  
+- `bq_client.load_table_from_dataframe(...)`
+
+This eliminated all connector issues and made BigQuery I/O stable.
+
+### 3. Updated Python dependencies
+To avoid runtime crashes, the following libraries were required:
+
+```
+pyspark
+google-cloud-bigquery
+db-dtypes
+pyarrow
+papermill
+pandas
+```
+
+`db-dtypes` fixed the BigQuery → pandas conversion error (`NO_DB_TYPES_ERROR`).
+
+### 4. Stabilized Docker image with only Spark + GCS connector
+The final Docker image contains:
+
+- Java  
+- PySpark  
+- Papermill  
+- The GCS Hadoop connector  
+- No BigQuery Spark connector  
+
+This ensures Spark reliably reads `gs://` paths without conflicts.
+
+### 5. Corrected GCP configuration (region, repo, IAM roles)
+- Region standardized to **us-central1**  
+- Artifact Registry repository: **de-pipelines**  
+- Service account roles fixed:  
+  - storage.objectAdmin  
+  - artifactregistry.reader  
+  - bigquery.dataEditor  
+  - bigquery.jobUser  
+  - bigquery.user  
+
+This resolved image pull errors, GCS access errors, and BigQuery permission failures.
+
+---
+
+✔ **Result:**  
+The pipeline now runs fully end‑to‑end in Cloud Run Jobs, reading notebooks from GCS, executing Spark transformations, and writing all tables to BigQuery using the Python client.
