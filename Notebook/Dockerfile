@@ -9,26 +9,20 @@ RUN apt-get update \
 ENV JAVA_HOME=/usr/lib/jvm/default-java
 ENV PATH="$JAVA_HOME/bin:$PATH"
 
-# Python settings
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
-
-# Werkdirectory in de container
 WORKDIR /app
 
-# Python dependencies installeren
+# Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# GCS connector in de pyspark/jars map zetten
+# Alleen GCS connector in de pyspark/jars map zetten (GEEN BigQuery Spark connector meer)
 RUN set -eux; \
     jars_dir=$(python -c "import pyspark, pathlib; print(pathlib.Path(pyspark.__file__).with_name('jars'))"); \
     mkdir -p "$jars_dir" && \
     curl -L https://storage.googleapis.com/hadoop-lib/gcs/gcs-connector-hadoop3-latest.jar \
          -o "$jars_dir/gcs-connector-hadoop3-latest.jar"
 
-# Pipeline code kopiëren (notebooks komen uit GCS)
+# Pipeline code kopiëren
 COPY . .
 
-# Start de pipeline runner (voor Cloud Run Job)
 CMD ["python", "run_pipeline1.py"]
